@@ -1,0 +1,190 @@
+###############################################################################
+# SCENARIO: Kubernetes workload published to the internet
+#
+# The Kubernetes Dashboard exposed via LoadBalancer with anonymous
+# cluster-admin, a privileged workload on hostNetwork, an unauthenticated
+# Ingress, and etcd/kubelet reachable through a NodePort.
+#
+# Attack path this models:
+#   internet -> LoadBalancer :80 -> Dashboard with no auth
+#            -> system:anonymous bound to cluster-admin -> whole cluster
+#
+# DO NOT APPLY.
+---
+# Anonymous users granted cluster-admin. This alone is total cluster takeover.
+# Category: Access Control
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: scenario-anonymous-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: User
+    name: system:anonymous
+    apiGroup: rbac.authorization.k8s.io
+  - kind: Group
+    name: system:unauthenticated
+    apiGroup: rbac.authorization.k8s.io
+---
+# Dashboard published straight to the internet with auth skipped
+# Categories: Access Control, Networking and Firewall
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scenario-exposed-dashboard
+  namespace: kubernetes-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: scenario-exposed-dashboard
+  template:
+    metadata:
+      labels:
+        app: scenario-exposed-dashboard
+    spec:
+      serviceAccountName: default
+      automountServiceAccountToken: true
+      containers:
+        - name: dashboard
+          image: kubernetesui/dashboard:latest
+          args:
+            - --enable-skip-login
+            - --disable-settings-authorizer
+            - --enable-insecure-login
+            - --insecure-port=9090
+          ports:
+            - containerPort: 9090
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false
+          resources: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scenario-exposed-dashboard
+  namespace: kubernetes-dashboard
+spec:
+  type: LoadBalancer
+  selector:
+    app: scenario-exposed-dashboard
+  ports:
+    - port: 80
+      targetPort: 9090
+---
+# Privileged workload on the host network, so it is reachable on every node IP
+# Categories: Insecure Configurations, Access Control
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: scenario-host-agent
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: scenario-host-agent
+  template:
+    metadata:
+      labels:
+        app: scenario-host-agent
+    spec:
+      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+      containers:
+        - name: agent
+          image: alpine:latest
+          command: ["sh", "-c", "nc -lk -p 4444 -e /bin/sh"]
+          ports:
+            - containerPort: 4444
+              hostPort: 4444
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            capabilities:
+              add: ["ALL", "SYS_ADMIN", "SYS_PTRACE", "NET_RAW"]
+          volumeMounts:
+            - name: host-root
+              mountPath: /host
+            - name: docker-sock
+              mountPath: /var/run/docker.sock
+          resources: {}
+      volumes:
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory
+        - name: docker-sock
+          hostPath:
+            path: /var/run/docker.sock
+---
+# NodePort exposing etcd and the kubelet on every node
+# Category: Networking and Firewall
+apiVersion: v1
+kind: Service
+metadata:
+  name: scenario-exposed-etcd
+  namespace: kube-system
+spec:
+  type: NodePort
+  selector:
+    component: etcd
+  ports:
+    - name: etcd-client
+      port: 2379
+      targetPort: 2379
+      nodePort: 32379
+    - name: kubelet
+      port: 10250
+      targetPort: 10250
+      nodePort: 32250
+---
+# Ingress with no TLS and no authentication annotations
+# Categories: Encryption, Access Control
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: scenario-exposed-ingress
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+spec:
+  rules:
+    - host: admin.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: scenario-exposed-dashboard
+                port:
+                  number: 80
+---
+# NetworkPolicy that permits all ingress from anywhere, defeating segmentation
+# Category: Networking and Firewall
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: scenario-allow-all
+  namespace: default
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0

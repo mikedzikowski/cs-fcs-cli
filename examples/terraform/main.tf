@@ -84,11 +84,11 @@ resource "aws_security_group" "wide_open" {
   }
 
   ingress {
-    description = "All ports all protocols"
-    from_port   = 0
-    to_port     = 65535
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
+    description      = "All ports all protocols"
+    from_port        = 0
+    to_port          = 65535
+    protocol         = "-1"
+    cidr_blocks      = ["0.0.0.0/0"]
     ipv6_cidr_blocks = ["::/0"]
   }
 
@@ -138,20 +138,20 @@ resource "aws_ebs_volume" "unencrypted" {
 # Categories: Access Control, Encryption, Backup
 # ---------------------------------------------------------------------------
 resource "aws_db_instance" "exposed" {
-  identifier                  = "fcs-demo-exposed-db"
-  engine                      = "mysql"
-  engine_version              = "8.0"
-  instance_class              = "db.t3.medium"
-  allocated_storage           = 20
-  username                    = "admin"
-  password                    = "Password123!"
-  publicly_accessible         = true
-  storage_encrypted           = false
-  backup_retention_period     = 0
-  deletion_protection         = false
-  skip_final_snapshot         = true
-  multi_az                    = false
-  auto_minor_version_upgrade  = false
+  identifier                          = "fcs-demo-exposed-db"
+  engine                              = "mysql"
+  engine_version                      = "8.0"
+  instance_class                      = "db.t3.medium"
+  allocated_storage                   = 20
+  username                            = "admin"
+  password                            = "Password123!"
+  publicly_accessible                 = true
+  storage_encrypted                   = false
+  backup_retention_period             = 0
+  deletion_protection                 = false
+  skip_final_snapshot                 = true
+  multi_az                            = false
+  auto_minor_version_upgrade          = false
   iam_database_authentication_enabled = false
 }
 
@@ -213,8 +213,8 @@ resource "aws_sns_topic" "unencrypted" {
 # Categories: Secret Management, Encryption
 # ---------------------------------------------------------------------------
 resource "aws_kms_key" "no_rotation" {
-  description           = "fcs-demo key without rotation"
-  enable_key_rotation   = false
+  description             = "fcs-demo key without rotation"
+  enable_key_rotation     = false
   deletion_window_in_days = 7
 }
 

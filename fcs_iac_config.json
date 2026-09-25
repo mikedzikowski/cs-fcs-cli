@@ -1,9 +1,0 @@
-{
-  "path": ["./examples"],
-  "report-formats": ["json", "csv", "sarif"],
-  "output-path": "./scan-reports",
-  "timeout": 600,
-  "policy-rule": "local",
-  "fail-on": ["critical=1", "high=1"],
-  "exclude-paths": ["./scan-reports/*"]
-}

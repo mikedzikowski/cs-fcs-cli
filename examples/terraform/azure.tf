@@ -99,13 +99,13 @@ resource "azurerm_mssql_firewall_rule" "allow_all" {
 # AKS: no RBAC, public API server, no network policy, no monitoring
 # Categories: Access Control, Networking and Firewall, Observability
 resource "azurerm_kubernetes_cluster" "insecure" {
-  name                            = "fcs-demo-aks"
-  location                        = azurerm_resource_group.demo.location
-  resource_group_name             = azurerm_resource_group.demo.name
-  dns_prefix                      = "fcsdemo"
+  name                              = "fcs-demo-aks"
+  location                          = azurerm_resource_group.demo.location
+  resource_group_name               = azurerm_resource_group.demo.name
+  dns_prefix                        = "fcsdemo"
   role_based_access_control_enabled = false
-  private_cluster_enabled         = false
-  local_account_disabled          = false
+  private_cluster_enabled           = false
+  local_account_disabled            = false
 
   default_node_pool {
     name       = "default"
