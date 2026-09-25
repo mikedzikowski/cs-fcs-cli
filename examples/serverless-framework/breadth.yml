@@ -1,0 +1,185 @@
+# Breadth coverage: Serverless Framework
+#
+# The ServerlessFW platform ships ~258 rules. serverless.yml covers the common
+# paths; this service widens coverage across provider settings, VPC config,
+# API Gateway, authorizers, and the CloudFormation resources it generates.
+#
+# DO NOT DEPLOY.
+service: fcs-breadth-serverless
+
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  # End-of-life runtime
+  runtime: python2.7
+  region: us-east-1
+  stage: prod
+  # Versioning off, so rollback is impossible
+  versionFunctions: false
+  # No tracing anywhere
+  tracing:
+    lambda: false
+    apiGateway: false
+  logs:
+    restApi: false
+    httpApi: false
+    websocket: false
+  # No KMS key for environment encryption
+  environment:
+    STAGE: prod
+    DB_PASSWORD: SuperSecretP@ssw0rd123
+    PRIVATE_KEY: "-----BEGIN RSA PRIVATE KEY-----PLACEHOLDER-----END RSA PRIVATE KEY-----"
+    STRIPE_KEY: sk_test_00000000000000000000000000
+  # Wildcard permissions granted to every function
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - "*"
+          Resource:
+            - "*"
+        - Effect: Allow
+          Action:
+            - iam:PassRole
+            - sts:AssumeRole
+          Resource: "*"
+  apiGateway:
+    apiKeys: []
+    minimumCompressionSize: 0
+    # No resource policy restricting callers
+
+functions:
+  # Unauthenticated endpoints with permissive CORS
+  openEndpoint:
+    handler: handler.open
+    events:
+      - http:
+          path: /{proxy+}
+          method: any
+          cors:
+            origin: "*"
+            headers: "*"
+            allowCredentials: true
+          authorizer: null
+      - httpApi:
+          path: /public
+          method: "*"
+
+  # Oversized resources, no concurrency cap, no DLQ
+  runaway:
+    handler: handler.runaway
+    timeout: 900
+    memorySize: 10240
+    environment:
+      ADMIN_TOKEN: sk-demo-not-a-real-token-000000000000
+
+  # Function in a VPC with no security group restrictions
+  vpcFunction:
+    handler: handler.vpc
+    vpc:
+      securityGroupIds:
+        - sg-0abcdef1234567890
+      subnetIds:
+        - subnet-0abcdef1234567890
+
+  # Publicly invocable via a function URL
+  publicUrl:
+    handler: handler.url
+    url:
+      cors: true
+      authorizer: none
+
+resources:
+  Resources:
+    # Public bucket without encryption or versioning
+    PublicAssets:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: fcs-breadth-public-assets
+        AccessControl: PublicReadWrite
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+          BlockPublicPolicy: false
+          IgnorePublicAcls: false
+          RestrictPublicBuckets: false
+        VersioningConfiguration:
+          Status: Suspended
+
+    PublicAssetsPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref PublicAssets
+        PolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Principal: "*"
+              Action: "s3:*"
+              Resource: !Sub "${PublicAssets.Arn}/*"
+
+    # Unencrypted table without point-in-time recovery
+    BreadthTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: fcs-breadth-table
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: false
+        SSESpecification:
+          SSEEnabled: false
+
+    # Queue and topic without encryption
+    BreadthQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: fcs-breadth-queue
+
+    BreadthTopic:
+      Type: AWS::SNS::Topic
+      Properties:
+        TopicName: fcs-breadth-topic
+
+    # Cognito pool with weak password policy and no MFA
+    BreadthUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: fcs-breadth-pool
+        MfaConfiguration: "OFF"
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 6
+            RequireUppercase: false
+            RequireLowercase: false
+            RequireNumbers: false
+            RequireSymbols: false
+
+    # Secret with a hardcoded value in the template
+    BreadthSecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: fcs-breadth-secret
+        SecretString: '{"password":"Password123!"}'
+
+    # Log group with no retention or KMS key
+    BreadthLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /aws/lambda/fcs-breadth
+        RetentionInDays: 1
+
+    # Security group open to the world
+    BreadthSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Open for breadth coverage
+        SecurityGroupIngress:
+          - IpProtocol: "-1"
+            CidrIp: 0.0.0.0/0

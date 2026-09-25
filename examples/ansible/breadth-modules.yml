@@ -1,0 +1,247 @@
+# Breadth coverage: additional Ansible modules
+#
+# The Ansible platform ships ~213 rules. insecure-playbook.yml covers the
+# common file/shell/AWS paths; this playbook widens coverage across Azure, GCP,
+# Kubernetes, Docker, and host-hardening modules.
+#
+# DO NOT RUN.
+---
+- name: FCS breadth coverage - insecure module usage
+  hosts: all
+  become: true
+  # Host key checking disabled at the play level
+  vars:
+    ansible_ssh_common_args: "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    db_password: SuperSecretP@ssw0rd123
+
+  tasks:
+    # --- Host hardening regressions -------------------------------------
+    # Category: Access Control
+    - name: Create a user with a weak, inline password
+      ansible.builtin.user:
+        name: appuser
+        password: "Password123!"
+        shell: /bin/bash
+        groups: sudo
+        append: true
+
+    - name: Disable SELinux entirely
+      ansible.posix.selinux:
+        state: disabled
+
+    - name: Stop and disable auditd
+      ansible.builtin.service:
+        name: auditd
+        state: stopped
+        enabled: false
+
+    - name: Allow empty passwords in PAM
+      ansible.builtin.lineinfile:
+        path: /etc/pam.d/common-auth
+        line: "auth sufficient pam_permit.so"
+
+    - name: World-readable private key
+      ansible.builtin.copy:
+        dest: /etc/ssl/private/server.key
+        mode: "0644"
+        content: |
+          -----BEGIN RSA PRIVATE KEY-----
+          PLACEHOLDER NOT A REAL KEY FOR FCS SCANNING DEMO
+          -----END RSA PRIVATE KEY-----
+
+    - name: Add a cron job that curls and executes remote code
+      ansible.builtin.cron:
+        name: updater
+        minute: "*/5"
+        job: "curl -sSL http://example.com/update.sh | bash"
+
+    # --- Package and repo trust ------------------------------------------
+    # Category: Supply-Chain
+    - name: Install packages without GPG verification
+      ansible.builtin.yum:
+        name: "*"
+        state: latest
+        disable_gpg_check: true
+
+    - name: Add an unsigned apt repository over HTTP
+      ansible.builtin.apt_repository:
+        repo: "deb http://packages.example.com/apt stable main"
+        validate_certs: false
+
+    - name: Unarchive from a remote HTTP source
+      ansible.builtin.unarchive:
+        src: http://example.com/payload.tar.gz
+        dest: /opt
+        remote_src: true
+        validate_certs: false
+
+    # --- Docker -----------------------------------------------------------
+    # Categories: Insecure Configurations, Access Control
+    - name: Run a privileged container with the host mounted
+      community.docker.docker_container:
+        name: breadth-agent
+        image: alpine:latest
+        privileged: true
+        network_mode: host
+        pid_mode: host
+        user: root
+        read_only: false
+        capabilities:
+          - ALL
+        volumes:
+          - /:/host:rw
+          - /var/run/docker.sock:/var/run/docker.sock
+        env:
+          DB_PASSWORD: "SuperSecretP@ssw0rd123"
+
+    # --- Kubernetes -------------------------------------------------------
+    # Categories: Access Control, Insecure Configurations
+    - name: Apply a privileged pod
+      kubernetes.core.k8s:
+        state: present
+        validate_certs: false
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: breadth-privileged
+            namespace: default
+          spec:
+            hostNetwork: true
+            containers:
+              - name: app
+                image: nginx:latest
+                securityContext:
+                  privileged: true
+                  runAsUser: 0
+                  allowPrivilegeEscalation: true
+
+    # --- Azure ------------------------------------------------------------
+    # Categories: Encryption, Access Control, Networking and Firewall
+    - name: Create a storage account without HTTPS enforcement
+      azure.azcollection.azure_rm_storageaccount:
+        resource_group: breadth-rg
+        name: breadthinsecuresa
+        account_type: Standard_LRS
+        https_only: false
+        minimum_tls_version: TLS1_0
+        public_network_access: Enabled
+        allow_blob_public_access: true
+
+    - name: Create an NSG rule allowing RDP from anywhere
+      azure.azcollection.azure_rm_securitygroup:
+        resource_group: breadth-rg
+        name: breadth-nsg
+        rules:
+          - name: AllowRDP
+            protocol: Tcp
+            destination_port_range: 3389
+            source_address_prefix: "*"
+            access: Allow
+            priority: 100
+            direction: Inbound
+          - name: AllowAll
+            protocol: "*"
+            destination_port_range: "*"
+            source_address_prefix: "0.0.0.0/0"
+            access: Allow
+            priority: 110
+            direction: Inbound
+
+    - name: Create a VM with password authentication
+      azure.azcollection.azure_rm_virtualmachine:
+        resource_group: breadth-rg
+        name: breadth-vm
+        vm_size: Standard_D2s_v3
+        admin_username: azureuser
+        admin_password: "Password123!"
+        ssh_password_enabled: true
+        public_ip_allocation_method: Static
+
+    - name: Create a SQL server reachable from the internet
+      azure.azcollection.azure_rm_sqlserver:
+        resource_group: breadth-rg
+        name: breadth-sql
+        admin_username: sqladmin
+        admin_password: "Password123!"
+        minimal_tls_version: "1.0"
+        public_network_access: Enabled
+
+    # --- GCP --------------------------------------------------------------
+    # Categories: Access Control, Networking and Firewall
+    - name: Create a publicly readable GCS bucket
+      google.cloud.gcp_storage_bucket:
+        name: breadth-public-bucket
+        project: breadth-project
+        auth_kind: serviceaccount
+        predefined_default_object_acl: publicRead
+        versioning:
+          enabled: false
+
+    - name: Create a firewall rule open to the internet
+      google.cloud.gcp_compute_firewall:
+        name: breadth-allow-all
+        project: breadth-project
+        auth_kind: serviceaccount
+        allowed:
+          - ip_protocol: tcp
+            ports:
+              - "22"
+              - "3389"
+              - "0-65535"
+        source_ranges:
+          - 0.0.0.0/0
+
+    - name: Create an instance with an external IP and full scopes
+      google.cloud.gcp_compute_instance:
+        name: breadth-vm
+        project: breadth-project
+        zone: us-central1-a
+        machine_type: e2-medium
+        auth_kind: serviceaccount
+        can_ip_forward: true
+        service_accounts:
+          - scopes:
+              - https://www.googleapis.com/auth/cloud-platform
+        metadata:
+          serial-port-enable: "TRUE"
+          enable-oslogin: "FALSE"
+        network_interfaces:
+          - access_configs:
+              - name: External NAT
+                type: ONE_TO_ONE_NAT
+
+    # --- AWS breadth -------------------------------------------------------
+    # Categories: Encryption, Access Control, Observability
+    - name: Create an unencrypted EFS filesystem
+      community.aws.efs:
+        name: breadth-efs
+        encrypt: false
+
+    - name: Create a CloudFront distribution allowing plain HTTP
+      community.aws.cloudfront_distribution:
+        alias: breadth.example.com
+        default_cache_behavior:
+          viewer_protocol_policy: allow-all
+        logging:
+          enabled: false
+
+    - name: Create an unencrypted Redshift cluster
+      community.aws.redshift:
+        command: create
+        identifier: breadth-redshift
+        node_type: dc2.large
+        username: admin
+        password: "Password123!"
+        encrypted: false
+        publicly_accessible: true
+
+    - name: Create an IAM policy with wildcard permissions
+      community.aws.iam_managed_policy:
+        policy_name: breadth-god-mode
+        policy:
+          Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: "*"
+              Resource: "*"
