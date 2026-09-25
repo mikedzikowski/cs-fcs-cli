@@ -138,9 +138,9 @@ Files named `*breadth*` exist purely to widen rule coverage across many services
 
 ## Known caveats
 
-Verified against FCS CLI **3.3.1** with the local ruleset:
+Verified against FCS CLI **4.2.1** with the local ruleset:
 
-- **Bicep barely registers.** The bundled ruleset has no Bicep platform rules, so `.bicep` files only yield embedded-secret findings, and `--platforms` doesn't accept `Bicep`. Transpiling to ARM JSON (`az bicep build`) routes them through the ARM rules and helps somewhat (scenario 09: 2 → 9 findings). The `.bicep` files are kept as-is so they light up when Bicep rules arrive in a newer CLI or via the cloud ruleset.
+- **Bicep barely registers, and upgrading does not fix it.** The bundled ruleset has no Bicep platform rules, so `.bicep` files only yield embedded-secret findings, and `--platforms` doesn't accept `Bicep` (only `AzureResourceManager`). This is unchanged between 3.3.1 and 4.2.1 — the docs list Azure Bicep as supported, so the coverage likely only arrives via the cloud/combined ruleset. Transpiling to ARM JSON (`az bicep build`) routes the files through the ARM rules and helps somewhat (scenario 09: 2 → 9 findings). The `.bicep` files are kept as-is to re-test against the combined ruleset.
 - **Crossplane and Pulumi coverage is genuinely small** — 18 and 21 rules respectively. Pulumi is also YAML-only.
 - **Azure NSG rules only match standalone `azurerm_network_security_rule` resources**, not inline `security_rule` blocks. Scenario 02 declares both for this reason.
 - **Unparseable files report 0 findings silently** rather than erroring — if a directory suddenly returns nothing, check the syntax first.
