@@ -1,0 +1,125 @@
+# Platform: Crossplane
+# Purpose: Intentionally insecure managed resources to demonstrate FCS CLI IaC
+#          detections. DO NOT APPLY.
+---
+# S3 bucket via Crossplane: public ACL, no encryption, no versioning
+# Categories: Access Control, Encryption, Backup
+apiVersion: s3.aws.crossplane.io/v1beta1
+kind: Bucket
+metadata:
+  name: fcs-demo-crossplane-bucket
+spec:
+  forProvider:
+    acl: public-read-write
+    locationConstraint: us-east-1
+    publicAccessBlockConfiguration:
+      blockPublicAcls: false
+      blockPublicPolicy: false
+      ignorePublicAcls: false
+      restrictPublicBuckets: false
+    versioningConfiguration:
+      status: Suspended
+  providerConfigRef:
+    name: aws-provider
+---
+# RDS instance: public, unencrypted, no backups, plaintext master password
+# Categories: Access Control, Encryption, Backup, Secret Management
+apiVersion: database.aws.crossplane.io/v1beta1
+kind: RDSInstance
+metadata:
+  name: fcs-demo-crossplane-db
+spec:
+  forProvider:
+    region: us-east-1
+    dbInstanceClass: db.t3.medium
+    masterUsername: admin
+    engine: mysql
+    engineVersion: "8.0"
+    allocatedStorage: 20
+    publiclyAccessible: true
+    storageEncrypted: false
+    backupRetentionPeriod: 0
+    deletionProtection: false
+    autoMinorVersionUpgrade: false
+    skipFinalSnapshotBeforeDeletion: true
+  writeConnectionSecretToRef:
+    name: fcs-demo-db-conn
+    namespace: crossplane-system
+  providerConfigRef:
+    name: aws-provider
+---
+# Security group open to the world
+# Category: Networking and Firewall
+apiVersion: ec2.aws.crossplane.io/v1beta1
+kind: SecurityGroup
+metadata:
+  name: fcs-demo-crossplane-sg
+spec:
+  forProvider:
+    region: us-east-1
+    description: Open to the world for FCS demo
+    groupName: fcs-demo-crossplane-sg
+    ingress:
+      - fromPort: 22
+        toPort: 22
+        ipProtocol: tcp
+        ipRanges:
+          - cidrIp: 0.0.0.0/0
+      - fromPort: 0
+        toPort: 65535
+        ipProtocol: "-1"
+        ipRanges:
+          - cidrIp: 0.0.0.0/0
+    egress:
+      - ipProtocol: "-1"
+        ipRanges:
+          - cidrIp: 0.0.0.0/0
+  providerConfigRef:
+    name: aws-provider
+---
+# IAM policy with wildcard action and resource
+# Category: Access Control
+apiVersion: iam.aws.crossplane.io/v1beta1
+kind: Policy
+metadata:
+  name: fcs-demo-crossplane-policy
+spec:
+  forProvider:
+    name: fcs-demo-crossplane-god-mode
+    document: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": "*",
+            "Resource": "*"
+          }
+        ]
+      }
+  providerConfigRef:
+    name: aws-provider
+---
+# Azure storage account via Crossplane: HTTP allowed, public access
+# Categories: Encryption, Access Control
+apiVersion: storage.azure.crossplane.io/v1alpha3
+kind: Account
+metadata:
+  name: fcs-demo-crossplane-sa
+spec:
+  resourceGroupName: fcs-demo-rg
+  storageAccountName: fcsdemocrossplanesa
+  storageAccountSpec:
+    kind: StorageV2
+    location: eastus
+    sku:
+      name: Standard_LRS
+    properties:
+      supportsHttpsTrafficOnly: false
+      allowBlobPublicAccess: true
+      encryption:
+        services:
+          blob:
+            enabled: false
+  providerConfigRef:
+    name: azure-provider

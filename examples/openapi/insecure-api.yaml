@@ -1,0 +1,119 @@
+# Platform: OpenAPI
+# Purpose: Intentionally insecure API definition to demonstrate FCS CLI IaC
+#          detections. DO NOT PUBLISH.
+openapi: 3.0.3
+
+info:
+  title: FCS Demo Insecure API
+  version: 1.0.0
+  # Missing license/contact/description - Structure and Semantics findings
+
+servers:
+  # Plain HTTP server instead of HTTPS
+  # Category: Encryption
+  - url: http://api.example.com/v1
+    description: Insecure HTTP endpoint
+
+# No global security requirement applied
+# Category: Access Control
+security: []
+
+components:
+  securitySchemes:
+    # Basic auth over HTTP
+    # Categories: Access Control, Encryption
+    basicAuth:
+      type: http
+      scheme: basic
+    # API key passed in the query string
+    # Category: Secret Management
+    apiKeyQuery:
+      type: apiKey
+      in: query
+      name: api_key
+    # OAuth2 implicit flow with plain HTTP and wildcard scope
+    # Categories: Access Control, Encryption
+    oauth2Implicit:
+      type: oauth2
+      flows:
+        implicit:
+          authorizationUrl: http://auth.example.com/oauth/authorize
+          scopes:
+            "*": Full access to everything
+
+  schemas:
+    User:
+      type: object
+      # No required fields, additionalProperties unrestricted
+      # Category: Structure and Semantics
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        password:
+          type: string
+        ssn:
+          type: string
+
+paths:
+  /users:
+    get:
+      summary: List all users
+      # No security requirement on a data-returning operation
+      # Category: Access Control
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        # No 4xx/5xx responses defined
+        # Category: Structure and Semantics
+
+    post:
+      summary: Create a user
+      security:
+        - basicAuth: []
+      requestBody:
+        # Request body not marked required
+        # Category: Structure and Semantics
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/User"
+      responses:
+        "200":
+          description: Created
+
+  /admin/{action}:
+    delete:
+      summary: Perform a destructive admin action
+      security:
+        - apiKeyQuery: []
+      parameters:
+        # Path parameter without schema or validation constraints
+        # Category: Structure and Semantics
+        - name: action
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+
+  /debug:
+    get:
+      summary: Returns internal diagnostics
+      security: []
+      responses:
+        "200":
+          description: Internal state dump
+          content:
+            application/json:
+              schema:
+                type: object

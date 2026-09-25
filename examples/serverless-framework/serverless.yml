@@ -1,0 +1,93 @@
+# Platform: ServerlessFW (Serverless Framework)
+# Purpose: Intentionally insecure service definition to demonstrate FCS CLI
+#          IaC detections. DO NOT DEPLOY.
+service: fcs-demo-serverless
+
+frameworkVersion: "3"
+
+provider:
+  name: aws
+  runtime: nodejs12.x  # End-of-life runtime - Supply-Chain / Best Practices
+  region: us-east-1
+  stage: dev
+  # X-Ray tracing disabled
+  # Category: Observability
+  tracing:
+    lambda: false
+    apiGateway: false
+  # Plaintext secrets in environment
+  # Category: Secret Management
+  environment:
+    DB_PASSWORD: SuperSecretP@ssw0rd123
+    AWS_SECRET_ACCESS_KEY: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+    API_TOKEN: sk-demo-not-a-real-token-000000000000
+  # Wildcard IAM permissions for every function
+  # Category: Access Control
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action: "*"
+          Resource: "*"
+
+functions:
+  # No authorizer on the HTTP endpoint, CORS wide open
+  # Categories: Access Control, Networking and Firewall
+  publicApi:
+    handler: src/handler.public
+    events:
+      - http:
+          path: /data
+          method: any
+          cors: true
+          authorizer: null
+      - httpApi:
+          path: /open
+          method: "*"
+
+  # Excessive timeout and memory, no reserved concurrency
+  # Category: Resource Management
+  heavyWorker:
+    handler: src/handler.worker
+    timeout: 900
+    memorySize: 10240
+    environment:
+      ADMIN_PASSWORD: Password123!
+
+resources:
+  Resources:
+    # Public S3 bucket, no encryption
+    # Categories: Access Control, Encryption
+    UploadsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: fcs-demo-serverless-uploads
+        AccessControl: PublicReadWrite
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+          BlockPublicPolicy: false
+          IgnorePublicAcls: false
+          RestrictPublicBuckets: false
+
+    # Unencrypted DynamoDB table without PITR
+    # Categories: Encryption, Backup
+    DataTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: fcs-demo-serverless-table
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+        PointInTimeRecoverySpecification:
+          PointInTimeRecoveryEnabled: false
+
+    # Unencrypted SQS queue
+    # Category: Encryption
+    JobQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: fcs-demo-serverless-queue

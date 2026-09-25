@@ -1,0 +1,120 @@
+# Platform: Ansible
+# Purpose: Intentionally insecure tasks to demonstrate FCS CLI IaC detections.
+#          DO NOT RUN.
+---
+- name: FCS demo - insecure provisioning
+  hosts: all
+  become: true
+  vars:
+    # Hardcoded credentials in plaintext vars
+    # Category: Secret Management
+    db_password: SuperSecretP@ssw0rd123
+    aws_access_key: AKIAIOSFODNN7EXAMPLE
+    aws_secret_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+  tasks:
+    # World-writable permissions on sensitive paths
+    # Category: Access Control
+    - name: Set world-writable permissions
+      ansible.builtin.file:
+        path: /opt/app
+        mode: "0777"
+        owner: root
+        group: root
+        state: directory
+
+    - name: Write config with weak permissions
+      ansible.builtin.copy:
+        dest: /etc/app/config.ini
+        mode: "0666"
+        content: |
+          [database]
+          password = SuperSecretP@ssw0rd123
+
+    # Downloads with TLS validation disabled
+    # Category: Encryption
+    - name: Download package without certificate validation
+      ansible.builtin.get_url:
+        url: https://example.com/package.tar.gz
+        dest: /tmp/package.tar.gz
+        validate_certs: false
+
+    - name: Call API over plain HTTP with validation off
+      ansible.builtin.uri:
+        url: http://example.com/api/config
+        validate_certs: false
+        method: GET
+
+    # Shell command injection surface and piping to shell
+    # Category: Insecure Configurations
+    - name: Pipe remote script into shell
+      ansible.builtin.shell: curl -sSL http://example.com/install.sh | bash
+      args:
+        warn: false
+
+    - name: Unquoted variable in command
+      ansible.builtin.shell: "rm -rf /data/{{ user_input }}"
+
+    # Passwordless sudo
+    # Category: Access Control
+    - name: Grant passwordless sudo to everyone
+      ansible.builtin.lineinfile:
+        path: /etc/sudoers
+        line: "ALL ALL=(ALL) NOPASSWD:ALL"
+        validate: /usr/sbin/visudo -cf %s
+
+    # SSH hardening disabled
+    # Category: Access Control
+    - name: Permit root SSH login with passwords
+      ansible.builtin.lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.regexp }}"
+        line: "{{ item.line }}"
+      loop:
+        - { regexp: "^PermitRootLogin", line: "PermitRootLogin yes" }
+        - { regexp: "^PasswordAuthentication", line: "PasswordAuthentication yes" }
+        - { regexp: "^PermitEmptyPasswords", line: "PermitEmptyPasswords yes" }
+
+    # Firewall disabled
+    # Category: Networking and Firewall
+    - name: Disable the host firewall
+      ansible.builtin.service:
+        name: firewalld
+        state: stopped
+        enabled: false
+
+    # AWS resources created insecurely via Ansible modules
+    # Categories: Access Control, Encryption
+    - name: Create public S3 bucket
+      amazon.aws.s3_bucket:
+        name: fcs-demo-ansible-bucket
+        policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"s3:*","Resource":"arn:aws:s3:::fcs-demo-ansible-bucket/*"}]}'
+        versioning: false
+        encryption: none
+        public_access:
+          block_public_acls: false
+          block_public_policy: false
+
+    - name: Create security group open to the world
+      amazon.aws.ec2_security_group:
+        name: fcs-demo-ansible-sg
+        description: Open to the world for FCS demo
+        rules:
+          - proto: tcp
+            from_port: 22
+            to_port: 22
+            cidr_ip: 0.0.0.0/0
+          - proto: -1
+            cidr_ip: 0.0.0.0/0
+
+    - name: Launch unencrypted RDS instance
+      community.aws.rds_instance:
+        id: fcs-demo-ansible-db
+        engine: mysql
+        db_instance_class: db.t3.medium
+        allocated_storage: 20
+        username: admin
+        password: "{{ db_password }}"
+        publicly_accessible: true
+        storage_encrypted: false
+        backup_retention_period: 0

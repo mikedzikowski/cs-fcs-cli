@@ -1,0 +1,37 @@
+# Platform: Kubernetes (Helm)
+# Insecure defaults consumed by templates/deployment.yaml
+image:
+  repository: nginx
+  tag: latest
+  pullPolicy: Always
+
+serviceAccount:
+  create: false
+  name: default
+
+podSecurityContext:
+  runAsUser: 0
+  runAsNonRoot: false
+
+securityContext:
+  privileged: true
+  allowPrivilegeEscalation: true
+  readOnlyRootFilesystem: false
+  capabilities:
+    add:
+      - ALL
+
+hostNetwork: true
+hostPID: true
+
+resources: {}
+
+service:
+  type: LoadBalancer
+  port: 80
+
+# Hardcoded secrets in values
+# Category: Secret Management
+secrets:
+  dbPassword: SuperSecretP@ssw0rd123
+  apiToken: sk-demo-not-a-real-token-000000000000

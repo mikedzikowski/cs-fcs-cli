@@ -1,0 +1,119 @@
+# Platform: Google Deployment Manager
+# Purpose: Intentionally insecure GCP resources to demonstrate FCS CLI IaC
+#          detections. DO NOT DEPLOY.
+resources:
+  # Storage bucket: public to allUsers, no versioning, no uniform access
+  # Categories: Access Control, Backup
+  - name: fcs-demo-gdm-bucket
+    type: storage.v1.bucket
+    properties:
+      location: US
+      versioning:
+        enabled: false
+      iamConfiguration:
+        uniformBucketLevelAccess:
+          enabled: false
+      acl:
+        - entity: allUsers
+          role: READER
+      defaultObjectAcl:
+        - entity: allUsers
+          role: READER
+
+  # Firewall open to the world on SSH/RDP/all
+  # Category: Networking and Firewall
+  - name: fcs-demo-gdm-allow-all
+    type: compute.v1.firewall
+    properties:
+      network: global/networks/default
+      sourceRanges:
+        - 0.0.0.0/0
+      allowed:
+        - IPProtocol: tcp
+          ports:
+            - "22"
+            - "3389"
+            - "0-65535"
+        - IPProtocol: all
+
+  # Compute instance: public IP, serial port, full-scope default SA,
+  # IP forwarding, shielded VM off, project SSH keys allowed
+  # Categories: Insecure Configurations, Access Control
+  - name: fcs-demo-gdm-vm
+    type: compute.v1.instance
+    properties:
+      zone: us-central1-a
+      machineType: zones/us-central1-a/machineTypes/e2-medium
+      canIpForward: true
+      disks:
+        - deviceName: boot
+          type: PERSISTENT
+          boot: true
+          autoDelete: true
+          initializeParams:
+            sourceImage: projects/debian-cloud/global/images/family/debian-11
+      networkInterfaces:
+        - network: global/networks/default
+          accessConfigs:
+            - name: External NAT
+              type: ONE_TO_ONE_NAT
+      metadata:
+        items:
+          - key: serial-port-enable
+            value: "TRUE"
+          - key: block-project-ssh-keys
+            value: "FALSE"
+          - key: enable-oslogin
+            value: "FALSE"
+          - key: startup-script
+            value: |
+              #!/bin/bash
+              export DB_PASSWORD="SuperSecretP@ssw0rd123"
+              curl -sSL http://example.com/install.sh | bash
+      serviceAccounts:
+        - email: default
+          scopes:
+            - https://www.googleapis.com/auth/cloud-platform
+      shieldedInstanceConfig:
+        enableSecureBoot: false
+        enableVtpm: false
+        enableIntegrityMonitoring: false
+
+  # Cloud SQL: public, no SSL, no backups
+  # Categories: Access Control, Encryption, Backup
+  - name: fcs-demo-gdm-sql
+    type: sqladmin.v1beta4.instance
+    properties:
+      region: us-central1
+      databaseVersion: POSTGRES_14
+      settings:
+        tier: db-f1-micro
+        ipConfiguration:
+          ipv4Enabled: true
+          requireSsl: false
+          authorizedNetworks:
+            - name: world
+              value: 0.0.0.0/0
+        backupConfiguration:
+          enabled: false
+
+  # GKE cluster: legacy ABAC, no network policy, client cert auth
+  # Categories: Access Control, Networking and Firewall
+  - name: fcs-demo-gdm-gke
+    type: container.v1.cluster
+    properties:
+      zone: us-central1-a
+      cluster:
+        name: fcs-demo-gdm-gke
+        initialNodeCount: 1
+        legacyAbac:
+          enabled: true
+        networkPolicy:
+          enabled: false
+        masterAuth:
+          username: admin
+          password: SuperSecretP@ssw0rd123
+          clientCertificateConfig:
+            issueClientCertificate: true
+        loggingService: none
+        monitoringService: none

@@ -1,0 +1,177 @@
+# Platform: Kubernetes
+# Purpose: Intentionally insecure workloads to demonstrate FCS CLI IaC
+#          detections. DO NOT APPLY.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fcs-demo-insecure
+  namespace: default
+  labels:
+    app: fcs-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fcs-demo
+  template:
+    metadata:
+      labels:
+        app: fcs-demo
+    spec:
+      # Host namespace sharing - container escape risk
+      # Category: Insecure Configurations
+      hostNetwork: true
+      hostPID: true
+      hostIPC: true
+      # Default service account with mounted token
+      # Category: Access Control
+      serviceAccountName: default
+      automountServiceAccountToken: true
+      containers:
+        - name: app
+          # Mutable :latest tag, no digest pinning
+          # Category: Supply-Chain
+          image: nginx:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              hostPort: 80
+          securityContext:
+            # Privileged root container with full capabilities
+            # Category: Access Control / Insecure Configurations
+            privileged: true
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: true
+            readOnlyRootFilesystem: false
+            capabilities:
+              add:
+                - ALL
+                - SYS_ADMIN
+                - NET_ADMIN
+          # No resource limits - DoS risk
+          # Category: Resource Management
+          resources: {}
+          # No liveness/readiness probes
+          # Category: Availability / Observability
+          env:
+            # Hardcoded secrets in plaintext env vars
+            # Category: Secret Management
+            - name: DB_PASSWORD
+              value: SuperSecretP@ssw0rd123
+            - name: API_TOKEN
+              value: sk-demo-not-a-real-token-000000000000
+          volumeMounts:
+            # Host filesystem mounted read-write
+            # Category: Insecure Configurations
+            - name: host-root
+              mountPath: /host
+            - name: docker-socket
+              mountPath: /var/run/docker.sock
+      volumes:
+        - name: host-root
+          hostPath:
+            path: /
+            type: Directory
+        - name: docker-socket
+          hostPath:
+            path: /var/run/docker.sock
+---
+# Service of type LoadBalancer with no restrictions
+# Category: Networking and Firewall
+apiVersion: v1
+kind: Service
+metadata:
+  name: fcs-demo-insecure
+  namespace: default
+spec:
+  type: LoadBalancer
+  externalIPs:
+    - 1.2.3.4
+  selector:
+    app: fcs-demo
+  ports:
+    - port: 80
+      targetPort: 80
+---
+# Secret stored as plaintext stringData
+# Category: Secret Management
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fcs-demo-secret
+  namespace: default
+type: Opaque
+stringData:
+  password: SuperSecretP@ssw0rd123
+  aws_secret_access_key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+---
+# ClusterRole granting wildcard permissions
+# Category: Access Control
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fcs-demo-cluster-admin
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fcs-demo-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: fcs-demo-cluster-admin
+subjects:
+  - kind: Group
+    name: system:anonymous
+    apiGroup: rbac.authorization.k8s.io
+  - kind: ServiceAccount
+    name: default
+    namespace: default
+---
+# Ingress without TLS
+# Category: Encryption
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fcs-demo-ingress
+  namespace: default
+spec:
+  rules:
+    - host: demo.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fcs-demo-insecure
+                port:
+                  number: 80
+---
+# CronJob running as root with no limits
+# Categories: Access Control, Resource Management
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: fcs-demo-cron
+  namespace: default
+spec:
+  schedule: "* * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: cron
+              image: busybox
+              command: ["sh", "-c", "curl http://example.com/script.sh | sh"]
+              securityContext:
+                privileged: true
+                runAsUser: 0

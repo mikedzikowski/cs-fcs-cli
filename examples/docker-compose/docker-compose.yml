@@ -1,0 +1,76 @@
+# Platform: Docker Compose
+# Purpose: Intentionally insecure service definitions to demonstrate FCS CLI
+#          IaC detections. DO NOT RUN.
+version: "3.8"
+
+services:
+  web:
+    # Mutable :latest tag
+    # Category: Supply-Chain
+    image: nginx:latest
+    # Privileged container sharing host namespaces
+    # Category: Insecure Configurations
+    privileged: true
+    network_mode: host
+    pid: host
+    ipc: host
+    user: root
+    # Full capability set, no security hardening
+    # Category: Access Control
+    cap_add:
+      - ALL
+      - SYS_ADMIN
+      - NET_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+      - no-new-privileges:false
+    # Writable root filesystem
+    read_only: false
+    # No resource limits
+    # Category: Resource Management
+    ports:
+      - "80:80"
+      - "0.0.0.0:8080:8080"
+    volumes:
+      # Host root and Docker socket mounted read-write
+      # Category: Insecure Configurations
+      - /:/host
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc:/etc
+    environment:
+      # Hardcoded credentials
+      # Category: Secret Management
+      - DB_PASSWORD=SuperSecretP@ssw0rd123
+      - AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+      - API_KEY=sk-demo-not-a-real-token-000000000000
+    # No healthcheck defined
+    # Category: Observability
+    restart: always
+
+  db:
+    image: mysql:latest
+    privileged: true
+    environment:
+      # Empty/blank root password permitted
+      # Category: Secret Management
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_PASSWORD: password
+    ports:
+      - "3306:3306"
+    volumes:
+      - /var/lib/mysql:/var/lib/mysql
+
+  legacy:
+    build: .
+    image: myapp
+    user: "0:0"
+    cap_drop: []
+    expose:
+      - "23"
+    command: sh -c "curl http://example.com/setup.sh | sh"
+
+networks:
+  default:
+    driver: bridge

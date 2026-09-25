@@ -1,0 +1,114 @@
+# Platform: Pulumi
+# Purpose: Intentionally insecure resources to demonstrate FCS CLI IaC
+#          detections. DO NOT DEPLOY.
+#
+# Note: the FCS CLI only scans YAML files for the Pulumi platform.
+name: fcs-demo-pulumi
+runtime: yaml
+description: Insecure Pulumi program for FCS CLI detection demos
+
+config:
+  dbPassword:
+    type: string
+    default: SuperSecretP@ssw0rd123
+
+resources:
+  # S3 bucket: public ACL, no encryption, no versioning
+  # Categories: Access Control, Encryption, Backup
+  publicBucket:
+    type: aws:s3:Bucket
+    properties:
+      bucket: fcs-demo-pulumi-bucket
+      acl: public-read-write
+      versioning:
+        enabled: false
+
+  publicAccessBlock:
+    type: aws:s3:BucketPublicAccessBlock
+    properties:
+      bucket: ${publicBucket.id}
+      blockPublicAcls: false
+      blockPublicPolicy: false
+      ignorePublicAcls: false
+      restrictPublicBuckets: false
+
+  # Security group open to the world
+  # Category: Networking and Firewall
+  wideOpenSg:
+    type: aws:ec2:SecurityGroup
+    properties:
+      name: fcs-demo-pulumi-sg
+      description: Open to the world for FCS demo
+      ingress:
+        - fromPort: 22
+          toPort: 22
+          protocol: tcp
+          cidrBlocks:
+            - 0.0.0.0/0
+        - fromPort: 3389
+          toPort: 3389
+          protocol: tcp
+          cidrBlocks:
+            - 0.0.0.0/0
+        - fromPort: 0
+          toPort: 65535
+          protocol: "-1"
+          cidrBlocks:
+            - 0.0.0.0/0
+      egress:
+        - fromPort: 0
+          toPort: 0
+          protocol: "-1"
+          cidrBlocks:
+            - 0.0.0.0/0
+
+  # RDS: public, unencrypted, no backups, plaintext password
+  # Categories: Access Control, Encryption, Backup, Secret Management
+  exposedDb:
+    type: aws:rds:Instance
+    properties:
+      identifier: fcs-demo-pulumi-db
+      engine: mysql
+      engineVersion: "8.0"
+      instanceClass: db.t3.medium
+      allocatedStorage: 20
+      username: admin
+      password: SuperSecretP@ssw0rd123
+      publiclyAccessible: true
+      storageEncrypted: false
+      backupRetentionPeriod: 0
+      deletionProtection: false
+      skipFinalSnapshot: true
+
+  # IAM policy with wildcard action and resource
+  # Category: Access Control
+  godModePolicy:
+    type: aws:iam:Policy
+    properties:
+      name: fcs-demo-pulumi-god-mode
+      policy:
+        fn::toJSON:
+          Version: 2012-10-17
+          Statement:
+            - Effect: Allow
+              Action: "*"
+              Resource: "*"
+
+  # Unencrypted EBS volume
+  # Category: Encryption
+  unencryptedVolume:
+    type: aws:ebs:Volume
+    properties:
+      availabilityZone: us-east-1a
+      size: 100
+      encrypted: false
+
+  # Unencrypted SQS queue
+  # Category: Encryption
+  unencryptedQueue:
+    type: aws:sqs:Queue
+    properties:
+      name: fcs-demo-pulumi-queue
+
+outputs:
+  bucketName: ${publicBucket.id}

@@ -1,0 +1,165 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Platform: CloudFormation. Intentionally insecure stack used to demonstrate
+  FCS CLI IaC detections. DO NOT DEPLOY.
+
+Parameters:
+  DBPassword:
+    Type: String
+    Default: Password123!
+    Description: Plaintext default password (Secret Management finding)
+
+Resources:
+  # S3: public-read-write ACL, no encryption, no versioning, no logging
+  # Categories: Access Control, Encryption, Backup, Observability
+  PublicBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: fcs-demo-cfn-public-bucket
+      AccessControl: PublicReadWrite
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      VersioningConfiguration:
+        Status: Suspended
+
+  PublicBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref PublicBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: "*"
+            Action: "s3:*"
+            Resource: !Sub "${PublicBucket.Arn}/*"
+
+  # Security group open to the world
+  # Category: Networking and Firewall
+  WideOpenSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Intentionally permissive for FCS detection demo
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 0
+          ToPort: 65535
+          CidrIpv6: "::/0"
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  # IAM: wildcard admin policy and role assumable by anyone
+  # Category: Access Control
+  GodModePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: fcs-demo-cfn-god-mode
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: "*"
+            Resource: "*"
+
+  AssumeByAnyoneRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: "*"
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - !Ref GodModePolicy
+
+  # IAM user with hardcoded access keys (Secret Management)
+  DemoUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: fcs-demo-user
+      LoginProfile:
+        Password: Password123!
+        PasswordResetRequired: false
+
+  # RDS: public, unencrypted, no backups, no deletion protection
+  # Categories: Access Control, Encryption, Backup
+  ExposedDatabase:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: fcs-demo-cfn-db
+      Engine: mysql
+      DBInstanceClass: db.t3.medium
+      AllocatedStorage: "20"
+      MasterUsername: admin
+      MasterUserPassword: !Ref DBPassword
+      PubliclyAccessible: true
+      StorageEncrypted: false
+      BackupRetentionPeriod: 0
+      DeletionProtection: false
+      MultiAZ: false
+      AutoMinorVersionUpgrade: false
+
+  # EC2: unencrypted volume, IMDSv1, detailed monitoring off
+  # Categories: Encryption, Insecure Configurations, Observability
+  DemoInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0abcdef1234567890
+      InstanceType: t3.large
+      Monitoring: false
+      SecurityGroupIds:
+        - !Ref WideOpenSecurityGroup
+      MetadataOptions:
+        HttpEndpoint: enabled
+        HttpTokens: optional
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 50
+            Encrypted: false
+
+  # Unencrypted queues/topics/logs
+  # Categories: Encryption, Observability
+  UnencryptedQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: fcs-demo-cfn-queue
+
+  UnencryptedTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: fcs-demo-cfn-topic
+
+  # ELB without HTTPS listener / access logs
+  # Categories: Encryption, Observability
+  PlainHttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: arn:aws:elasticloadbalancing:us-east-1:111122223333:loadbalancer/app/demo/abc
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: fixed-response
+          FixedResponseConfig:
+            StatusCode: "200"
+            ContentType: text/plain
+
+Outputs:
+  BucketName:
+    Value: !Ref PublicBucket
