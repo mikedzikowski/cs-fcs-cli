@@ -7,6 +7,50 @@ Scanning `examples/` produces **1,163 findings across 32 files** spanning AWS, A
 > [!WARNING]
 > **Never deploy anything in this repo.** Every file is intentionally misconfigured. All credentials are well-known non-functional placeholders from public vendor documentation (e.g. `AKIAIOSFODNN7EXAMPLE`) — no real secrets are committed.
 
+## Install the CLI
+
+Skip this if you only plan to use the VS Code extension — it downloads and manages its own `fcs` binary.
+
+There is **no public GitHub release** of the FCS CLI; it ships through the Falcon console and the CrowdStrike API. Verified against 4.2.3.
+
+**Console:** Support and resources > Resources and tools > Tool downloads, then search for `CLI`.
+
+**Already installed?** `fcs update` works on 0.42.0+ (on 2.1.7+ the API client needs `Cloud Security Tools Download: Read`).
+
+**Programmatically** — needs `curl` and `jq`, plus an API client with `Cloud Security Tools Download: Read`. Pick your cloud's API base URL: `us-1` → `https://api.crowdstrike.com`, `us-2` → `https://api.us-2.crowdstrike.com`, `eu-1` → `https://api.eu-1.crowdstrike.com`, `us-gov-1` → `https://api.laggar.gcw.crowdstrike.com`, `us-gov-2` → `https://api.us-gov-2.crowdstrike.mil`.
+
+```bash
+FALCON_API_URL="https://api.crowdstrike.com"
+
+TOK=$(curl -s --request POST \
+  --header "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "client_id=${FALCON_CLIENT_ID}" \
+  --data-urlencode "client_secret=${FALCON_CLIENT_SECRET}" \
+  --url "${FALCON_API_URL}/oauth2/token" | jq -r '.access_token')
+
+# List builds. os: darwin|linux|windows, arch: arm64|amd64
+curl -s --get \
+  --header 'accept: application/json' \
+  --header "Authorization: Bearer ${TOK}" \
+  --url "${FALCON_API_URL}/csdownloads/combined/files-download/v2" \
+  --data-urlencode 'filter=category:"fcs"+os:"darwin"+arch:"arm64"' \
+| jq -r '.resources[] | "\(.file_name)\t\(.file_version)\t\(.file_hash)"'
+```
+
+Each build also carries a `download_info.download_url`. Download it, **verify the hash against `file_hash`**, then extract and put it on your `PATH` — `/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel macOS and Linux:
+
+```bash
+curl -sL --output fcs.tar.gz "<download_url>"
+shasum -a 256 fcs.tar.gz          # must match file_hash
+tar -xzf fcs.tar.gz
+chmod u+x fcs && mv fcs /opt/homebrew/bin/
+fcs version
+```
+
+Windows ships as a `.zip` (`Expand-Archive`). A Linux/arm64 container image is also published to the CrowdStrike registry for containerized pipelines.
+
+Scanning this repo needs no credentials, but downloading the CLI does. If you also want cloud rules or uploads, add `Infrastructure as Code: Read/Write`, and for `fcs scan image`, `Falcon Container CLI` + `Falcon Container Image` (both Read/Write). Store them with `fcs configure`, which writes `~/.crowdstrike/fcs.json`.
+
 ## Usage
 
 No Falcon credentials needed — `--disable-custom-rules` (`-d`) keeps the scan on the bundled local ruleset, entirely offline.

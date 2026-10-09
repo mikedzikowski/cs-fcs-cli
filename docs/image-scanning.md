@@ -14,43 +14,11 @@ Everything below was verified against **FCS CLI 4.2.3** on macOS arm64.
 
 ## Install
 
-There is no public GitHub release of the FCS CLI — it is distributed through the Falcon console and the CrowdStrike API.
-
-**Via the console:** Support and resources > Resources and tools > Tool downloads, then search for `CLI`.
-
-**Already have it?** `fcs update` works on 0.42.0+. On 2.1.7+ the API client needs `Cloud Security Tools Download: Read`.
-
-**Programmatically** (needs `jq` and `curl`). Pick the API base URL for your cloud — `us-1` → `https://api.crowdstrike.com`, `us-2` → `https://api.us-2.crowdstrike.com`, `eu-1` → `https://api.eu-1.crowdstrike.com`, `us-gov-1` → `https://api.laggar.gcw.crowdstrike.com`, `us-gov-2` → `https://api.us-gov-2.crowdstrike.mil`:
-
-```bash
-FALCON_API_URL="https://api.crowdstrike.com"
-
-TOK=$(curl -s --request POST \
-  --header "Content-Type: application/x-www-form-urlencoded" \
-  --data-urlencode "client_id=${FALCON_CLIENT_ID}" \
-  --data-urlencode "client_secret=${FALCON_CLIENT_SECRET}" \
-  --url "${FALCON_API_URL}/oauth2/token" | jq -r '.access_token')
-
-# Enumerate builds. os: darwin|linux|windows, arch: arm64|amd64
-curl -s --get \
-  --header 'accept: application/json' \
-  --header "Authorization: Bearer ${TOK}" \
-  --url "${FALCON_API_URL}/csdownloads/combined/files-download/v2" \
-  --data-urlencode 'filter=category:"fcs"+os:"darwin"+arch:"arm64"' \
-| jq -r '.resources[] | "\(.file_name)\t\(.file_version)\t\(.file_hash)"'
-```
-
-That returns a `download_info.download_url` per build. Download it, **check the hash against `file_hash`**, then extract and put it on your `PATH` (`/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel macOS and Linux):
-
-```bash
-tar -xzf fcs_*.tar.gz
-chmod u+x fcs
-fcs version
-```
-
-The CLI is also published as a Linux/arm64 container image in the CrowdStrike registry, which is the better fit for containerized pipelines.
+Same binary as the IaC scanner — see [Install the CLI](../README.md#install-the-cli) in the main README.
 
 ### API scopes
+
+Image scanning needs two scopes the IaC path doesn't:
 
 | Scope | Permission | Needed for |
 |---|---|---|
