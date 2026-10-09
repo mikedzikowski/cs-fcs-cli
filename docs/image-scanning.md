@@ -56,6 +56,9 @@ fcs scan image alpine:3.21 --platform linux/arm64,linux/amd64
 fcs scan image mcr.microsoft.com/windows/servercore:ltsc2025 --platform windows/amd64
 ```
 
+> [!TIP]
+> In practice, pass `--platform` for anything multi-arch. Leaving it off makes the CLI try to resolve platforms your local store doesn't have, and it reports that as `❌ Image not found` even when the image is right there. See [Gotchas](#gotchas).
+
 Large images or slow networks can blow past the default 300-second timeout, surfacing as `context deadline exceeded`. Raise it with `--timeout 600`.
 
 ### Real output
@@ -91,11 +94,28 @@ Misconfiguration  Low     UserInstructionNotInDockerfile
 
 Exit codes reflect the image assessment policy:
 
-| Code | Meaning |
-|---|---|
-| `0` | Image met the policy requirements |
-| `1` | Did not meet requirements — **block** |
-| `2` | Did not meet requirements — **alert** |
+| Code | On-screen `Result` | Meaning |
+|---|---|---|
+| `0` | `NO ACTION` | Image met the policy requirements |
+| `1` | `BLOCK` | Did not meet requirements — block it |
+| `2` | `ALERT` | Did not meet requirements — alert |
+
+Verified against CrowdStrike's public `vulnapp` test image, which is built to fail:
+
+```console
+$ fcs scan image quay.io/crowdstrike/vulnapp:latest --platform linux/amd64
+│ Result                  │ BLOCK                                   │
+│ Policy Name             │ Block crowdstrike vulnapp               │
+│ Policy Type             │ Image Assessment Prevention Policy      │
+│ Number of Matched CVEs  │ 254 CVEs matched policy conditions      │
+│ Number of Detections    │ 2 detections matched policy conditions  │
+Total Vulnerabilities: 597 (Critical: 1, High: 33, Medium: 163, Low: 400)
+
+$ echo $?
+1
+```
+
+The `Matched CVEs` and `Matched Detections` rows list exactly what tripped the policy, which is usually what you want in a build log.
 
 ```bash
 fcs scan image "$IMAGE" --platform linux/amd64 || {
@@ -169,6 +189,8 @@ fcs scan image "$IMAGE" --upload --scan-only   # console only, no local report
 
 ## Gotchas
 
+- **`❌ Image not found` on an image that is clearly present.** Pass `--platform` explicitly for multi-arch images. With no `--platform` the CLI tries to resolve every platform in the manifest and fails on the ones your local store doesn't hold, but reports it as a missing image. Verified: `quay.io/crowdstrike/vulnapp:latest` fails this way with the image sitting in the local store, and scans cleanly with `--platform linux/amd64`.
+- **`daemon socket not detected` under non-standard runtimes.** Socket probing covers the default Docker and Podman paths. Colima puts its socket under `~/.colima/`, so it isn't found. Get the real path with `docker context inspect --format '{{.Endpoints.docker.Host}}'` and pass it to `--socket`. Note that a failed *pull* can surface as `Image not found` with the daemon-probe list underneath, so read the full error.
 - **Assessments are cached by registry + repository + tag + digest.** A matching image returns the *existing* report rather than re-assessing, even if the first assessment came from a different method (registry connection, SHRA). The console's Source column keeps the original method.
 - **`docker push` changes the image digest**, so the same image can appear repeatedly in the console under different digests. Use `crane` or `skopeo` to preserve digests.
 - **Windows images legitimately have empty `path` fields** on some findings — OS-level CVEs matched by build number or registry identity aren't tied to a file on disk.

@@ -9,47 +9,146 @@ Scanning `examples/` produces **1,163 findings across 32 files** spanning AWS, A
 
 ## Install the CLI
 
-Skip this if you only plan to use the VS Code extension — it downloads and manages its own `fcs` binary.
+> [!TIP]
+> Using the VS Code extension instead? Skip this entirely — it downloads and manages its own `fcs` binary.
 
-There is **no public GitHub release** of the FCS CLI; it ships through the Falcon console and the CrowdStrike API. Verified against 4.2.3.
+There is **no public GitHub release** of the FCS CLI. It ships through the Falcon console and the CrowdStrike API, so installing it always starts with an API key. Three steps, verified against 4.2.3.
 
-**Console:** Support and resources > Resources and tools > Tool downloads, then search for `CLI`.
+### 1. Create an API key
 
-**Already installed?** `fcs update` works on 0.42.0+ (on 2.1.7+ the API client needs `Cloud Security Tools Download: Read`).
+In the Falcon console: **Support and resources > Resources and tools > API clients and keys > Add new API client**. Grant only what you need:
 
-**Programmatically** — needs `curl` and `jq`, plus an API client with `Cloud Security Tools Download: Read`. Pick your cloud's API base URL: `us-1` → `https://api.crowdstrike.com`, `us-2` → `https://api.us-2.crowdstrike.com`, `eu-1` → `https://api.eu-1.crowdstrike.com`, `us-gov-1` → `https://api.laggar.gcw.crowdstrike.com`, `us-gov-2` → `https://api.us-gov-2.crowdstrike.mil`.
+| Scope | Permission | Needed for |
+|---|---|---|
+| Cloud Security Tools Download | Read | Downloading the CLI and `fcs update` — always |
+| Infrastructure as Code | Read / Write | `fcs scan iac` cloud rules and `--upload` |
+| Falcon Container CLI | Read / Write | `fcs scan image` |
+| Falcon Container Image | Read / Write | `fcs scan image` |
+
+> [!WARNING]
+> Copy the secret before closing the dialog — it cannot be retrieved afterwards.
+
+Your region comes from the console URL you log into:
+
+| Console URL | Region | API host |
+|---|---|---|
+| `falcon.crowdstrike.com` | `us-1` | `https://api.crowdstrike.com` |
+| `falcon.us-2.crowdstrike.com` | `us-2` | `https://api.us-2.crowdstrike.com` |
+| `falcon.eu-1.crowdstrike.com` | `eu-1` | `https://api.eu-1.crowdstrike.com` |
+| `falcon.laggar.gcw.crowdstrike.com` | `us-gov-1` | `https://api.laggar.gcw.crowdstrike.com` |
+| `falcon.us-gov-2.crowdstrike.mil` | `us-gov-2` | `https://api.us-gov-2.crowdstrike.mil` |
+
+### 2. Get the binary
+
+**Option A — console (easiest).** Go to **Support and resources > Resources and tools > Tool downloads** and search for `CLI`.
+
+**Option B — already installed.** `fcs update` (works on 0.42.0+).
+
+**Option C — scripted.** Needs `curl` and `jq`. This finds the newest build for your platform, downloads it, and verifies the checksum:
 
 ```bash
-FALCON_API_URL="https://api.crowdstrike.com"
+export FALCON_CLIENT_ID="..." FALCON_CLIENT_SECRET="..."
+FALCON_API_URL="https://api.crowdstrike.com"   # see region table above
+FCS_OS="darwin"                                 # darwin | linux | windows
+FCS_ARCH="arm64"                                # arm64 | amd64
 
-TOK=$(curl -s --request POST \
-  --header "Content-Type: application/x-www-form-urlencoded" \
+TOKEN=$(curl -sS -X POST "${FALCON_API_URL}/oauth2/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
   --data-urlencode "client_id=${FALCON_CLIENT_ID}" \
-  --data-urlencode "client_secret=${FALCON_CLIENT_SECRET}" \
-  --url "${FALCON_API_URL}/oauth2/token" | jq -r '.access_token')
+  --data-urlencode "client_secret=${FALCON_CLIENT_SECRET}" | jq -r .access_token)
 
-# List builds. os: darwin|linux|windows, arch: arm64|amd64
-curl -s --get \
-  --header 'accept: application/json' \
-  --header "Authorization: Bearer ${TOK}" \
-  --url "${FALCON_API_URL}/csdownloads/combined/files-download/v2" \
-  --data-urlencode 'filter=category:"fcs"+os:"darwin"+arch:"arm64"' \
-| jq -r '.resources[] | "\(.file_name)\t\(.file_version)\t\(.file_hash)"'
+BUILD=$(curl -sS -G "${FALCON_API_URL}/csdownloads/combined/files-download/v2" \
+  -H "Authorization: Bearer ${TOKEN}" -H 'accept: application/json' \
+  --data-urlencode "filter=category:\"fcs\"+os:\"${FCS_OS}\"+arch:\"${FCS_ARCH}\"" \
+  | jq -r '[.resources[]] | sort_by(.file_version | split(".") | map(tonumber)) | last
+           | "\(.file_name)\t\(.file_hash)\t\(.download_info.download_url)"')
+
+NAME=$(printf '%s' "$BUILD" | cut -f1)
+HASH=$(printf '%s' "$BUILD" | cut -f2)
+URL=$(printf '%s' "$BUILD" | cut -f3)
+
+curl -sS -L -o "$NAME" "$URL"
+echo "${HASH}  ${NAME}" | shasum -a 256 -c -   # must print "OK"
 ```
 
-Each build also carries a `download_info.download_url`. Download it, **verify the hash against `file_hash`**, then extract and put it on your `PATH` — `/opt/homebrew/bin` on Apple Silicon, `/usr/local/bin` on Intel macOS and Linux:
+Drop `sort_by(...) | last` and print `.file_version` instead if you want to pin a specific version rather than take the newest.
+
+Then unpack it and put it on your `PATH`:
 
 ```bash
-curl -sL --output fcs.tar.gz "<download_url>"
-shasum -a 256 fcs.tar.gz          # must match file_hash
-tar -xzf fcs.tar.gz
-chmod u+x fcs && mv fcs /opt/homebrew/bin/
+tar -xzf fcs_*.tar.gz        # Windows: Expand-Archive -Path fcs_*.zip -DestinationPath .
+chmod u+x fcs
+mv fcs /opt/homebrew/bin/    # Apple Silicon
+```
+
+| Platform | Put it in |
+|---|---|
+| macOS, Apple Silicon | `/opt/homebrew/bin` |
+| macOS, Intel | `/usr/local/bin` |
+| Linux | `/usr/local/bin` or `/usr/bin` |
+| Windows | `C:\Windows\System32`, or any dir you add to `PATH` |
+
+A Linux/arm64 container image is also published to the CrowdStrike registry, which suits containerized pipelines better than a binary.
+
+### 3. Configure credentials
+
+```console
+$ fcs configure
+
+=== Falcon Cloud Security CLI Configuration ===
+
+Creating new configuration file at: /Users/you/.crowdstrike/fcs.json
+
+Configuring profile 'default':
+
+Falcon Client ID: aabbccdd...11223344
+Falcon Client Secret:
+Falcon Region [us-1, us-2, us-3, eu-1, us-gov-1, us-gov-2]: us-1
+```
+
+The secret is not echoed. This writes `~/.crowdstrike/fcs.json` and is a one-time step. Use `fcs configure list` to review profiles, `fcs configure --profile prod` to add another, and `--profile prod` or `FCS_PROFILE` to select one.
+
+You can skip `fcs configure` and pass `--client-id` / `--client-secret`, or export `FALCON_CLIENT_ID` / `FALCON_CLIENT_SECRET`, instead. Precedence is **flags > environment variables > profile**.
+
+> [!WARNING]
+> That precedence is a common foot-gun: stale `FALCON_CLIENT_*` exports left in your shell profile will silently override a correct `fcs.json` and fail OAuth. If auth fails against a profile you believe is good, `unset` them and retry.
+
+### 4. Verify
+
+```bash
 fcs version
 ```
 
-Windows ships as a `.zip` (`Expand-Archive`). A Linux/arm64 container image is also published to the CrowdStrike registry for containerized pipelines.
+IaC needs no credentials or network:
 
-Scanning this repo needs no credentials, but downloading the CLI does. If you also want cloud rules or uploads, add `Infrastructure as Code: Read/Write`, and for `fcs scan image`, `Falcon Container CLI` + `Falcon Container Image` (both Read/Write). Store them with `fcs configure`, which writes `~/.crowdstrike/fcs.json`.
+```bash
+fcs scan iac -p ./examples --disable-custom-rules
+```
+
+Image assessment does need credentials. CrowdStrike publishes `vulnapp` as a public test image, and it's a good end-to-end check because it's *expected* to fail policy:
+
+```console
+$ fcs scan image quay.io/crowdstrike/vulnapp:latest --platform linux/amd64
+│ Result                  │ BLOCK                                   │
+│ Policy Name             │ Block crowdstrike vulnapp               │
+│ Number of Matched CVEs  │ 254 CVEs matched policy conditions      │
+Total Vulnerabilities: 597 (Critical: 1, High: 33, Medium: 163, Low: 400)
+Total Detections: 17 (Critical: 0, High: 4, Medium: 12, Low: 1)
+
+$ echo $?
+1
+```
+
+Exit `1` is the correct result here — it's the signal a CI gate should act on. `vulnapp` deliberately ships known vulnerabilities, so scan it, don't run it.
+
+**If the image scan fails**, two things bite on macOS in particular:
+
+- **`❌ Image not found` when the image is demonstrably present.** For a multi-arch image, pass `--platform` explicitly. Without it the CLI tries to resolve every platform in the manifest and fails on the ones your local store doesn't have — reported as if the image were missing. `--platform linux/amd64` fixes it.
+- **`daemon socket not detected`.** The CLI probes the default Docker and Podman socket paths, which misses non-standard runtimes. Colima, for example, puts it under `~/.colima/`. Find yours with `docker context inspect --format '{{.Endpoints.docker.Host}}'` and pass `--socket`.
+
+Otherwise, confirm the key's scopes in the console, and check that your runtime can pull public images anonymously (`docker pull quay.io/crowdstrike/vulnapp` on its own is a clean way to isolate that).
+
+Beyond the OAuth hosts in the region table, image assessment and `--upload` also reach `https://container-upload.<region>.crowdstrike.com`, which may need allowlisting.
 
 ## Usage
 
