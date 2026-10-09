@@ -1,0 +1,226 @@
+# GitHub Actions Workflow for Container Security Scanning
+# Place this in .github/workflows/container-security.yml
+
+name: Container Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run weekly security scans
+    - cron: '0 2 * * 1'
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.vulnerable
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install FCS CLI
+        run: |
+          curl -L "https://github.com/CrowdStrike/falcon-container-sensor-cli/releases/latest/download/fcs_linux_amd64.tar.gz" -o fcs.tar.gz
+          tar -xzf fcs.tar.gz
+          sudo mv fcs /usr/local/bin/
+          chmod +x /usr/local/bin/fcs
+
+      - name: Verify FCS CLI installation
+        run: fcs version
+
+      - name: Run container security scan
+        env:
+          FALCON_CLIENT_ID: ${{ secrets.FALCON_CLIENT_ID }}
+          FALCON_CLIENT_SECRET: ${{ secrets.FALCON_CLIENT_SECRET }}
+          FALCON_CLOUD: ${{ secrets.FALCON_CLOUD || 'us-1' }}
+        run: |
+          # Get the first tag from the metadata
+          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | head -n1)
+          echo "Scanning image: $IMAGE_TAG"
+
+          # Create results directory
+          mkdir -p scan-results
+
+          # Run FCS scan with multiple output formats
+          fcs image scan "$IMAGE_TAG" \
+            --format json \
+            --output scan-results/security-report.json
+
+          fcs image scan "$IMAGE_TAG" \
+            --format sarif \
+            --output scan-results/security-report.sarif
+
+          # Generate summary for PR comment
+          fcs image scan "$IMAGE_TAG" \
+            --format table > scan-results/security-summary.txt
+
+      - name: Upload security results to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: scan-results/security-report.sarif
+          category: container-security
+
+      - name: Check security gate
+        run: |
+          # Parse JSON results to check for critical/high severity issues
+          CRITICAL=$(jq -r '.vulnerabilities[] | select(.severity == "CRITICAL") | .cve' scan-results/security-report.json 2>/dev/null | wc -l || echo "0")
+          HIGH=$(jq -r '.vulnerabilities[] | select(.severity == "HIGH") | .cve' scan-results/security-report.json 2>/dev/null | wc -l || echo "0")
+
+          echo "Security scan results:"
+          echo "- Critical vulnerabilities: $CRITICAL"
+          echo "- High severity vulnerabilities: $HIGH"
+
+          # Fail the build if there are critical vulnerabilities
+          if [ "$CRITICAL" -gt 0 ]; then
+            echo "❌ Build failed: $CRITICAL critical vulnerabilities found"
+            exit 1
+          fi
+
+          # Warn if there are high severity vulnerabilities
+          if [ "$HIGH" -gt 5 ]; then
+            echo "⚠️ Warning: $HIGH high severity vulnerabilities found (threshold: 5)"
+            # Could exit 1 here to fail the build, or just warn
+          fi
+
+          echo "✅ Security gate passed"
+
+      - name: Comment PR with security results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Read the security summary
+            let summary;
+            try {
+              summary = fs.readFileSync('scan-results/security-summary.txt', 'utf8');
+            } catch (error) {
+              summary = 'Security scan results not available';
+            }
+
+            // Create PR comment
+            const body = `## 🔍 Container Security Scan Results
+
+            <details>
+            <summary>Click to view detailed scan results</summary>
+
+            \`\`\`
+            ${summary}
+            \`\`\`
+
+            </details>
+
+            📊 **Security Dashboard**: Check the [Security tab](${context.payload.repository.html_url}/security) for detailed vulnerability information.
+
+            🔗 **Artifacts**: Scan results are available in the workflow artifacts.
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+      - name: Upload scan artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-scan-results-${{ github.sha }}
+          path: scan-results/
+          retention-days: 30
+
+      - name: Push image if security checks pass
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.vulnerable
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # Optional: Scan existing images in registry
+  registry-scan:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule'
+    strategy:
+      matrix:
+        image:
+          - "ghcr.io/${{ github.repository }}:main"
+          - "ghcr.io/${{ github.repository }}:latest"
+
+    steps:
+      - name: Install FCS CLI
+        run: |
+          curl -L "https://github.com/CrowdStrike/falcon-container-sensor-cli/releases/latest/download/fcs_linux_amd64.tar.gz" -o fcs.tar.gz
+          tar -xzf fcs.tar.gz
+          sudo mv fcs /usr/local/bin/
+
+      - name: Scan registry image
+        env:
+          FALCON_CLIENT_ID: ${{ secrets.FALCON_CLIENT_ID }}
+          FALCON_CLIENT_SECRET: ${{ secrets.FALCON_CLIENT_SECRET }}
+          FALCON_CLOUD: ${{ secrets.FALCON_CLOUD || 'us-1' }}
+        run: |
+          echo "Scanning registry image: ${{ matrix.image }}"
+
+          # Pull image
+          docker pull ${{ matrix.image }} || echo "Image not found, skipping"
+
+          # Scan if image exists
+          if docker image inspect ${{ matrix.image }} &>/dev/null; then
+            fcs image scan ${{ matrix.image }} \
+              --format sarif \
+              --output "${{ matrix.image }}-scan.sarif"
+          fi
+
+      - name: Upload registry scan results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: "${{ matrix.image }}-scan.sarif"
+          category: "registry-scan-${{ strategy.job-index }}"

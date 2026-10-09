@@ -18,6 +18,7 @@ fcs scan iac -p ./examples --policy-rule local
 # One platform or scenario
 fcs scan iac -p ./examples/kubernetes --policy-rule local
 fcs scan iac -p ./examples/scenarios/01-internet-exposed-vm-aws --policy-rule local
+fcs scan iac -p ./examples/scenarios/11-container-image-scanning --policy-rule local
 
 # Narrow the output
 fcs scan iac -p ./examples --severities critical,high
@@ -123,6 +124,7 @@ Files named `*breadth*` exist purely to widen rule coverage across many services
 | `04-public-database` | 33 | RDS/SQL/Cosmos published to the internet, unencrypted, no backups |
 | `03-internet-exposed-vm-gcp` | 10 | External IP + allow-all firewall + default SA with full scope |
 | `02-internet-exposed-vm-azure` | 7 | Public IP + NSG open on RDP/SSH/WinRM + VM identity as Owner |
+| `11-container-image-scanning` | * | Vulnerable container images, hardcoded secrets, insecure configurations |
 | `08`–`10` (Bicep) | 0–2 | Exposed VM, public data services, public AKS + ACR — see caveats |
 
 ## Suppression
